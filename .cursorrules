@@ -1,0 +1,232 @@
+# Council Mode Protocol
+
+A multi-model deliberation system for planning and analysis questions.
+
+## IMPORTANT: Agent Mode Required
+
+Council mode requires **Agent mode** to function - it needs to write files to `~/.cursor-council/`.
+Ask mode and Plan mode are read-only and cannot participate in council deliberations.
+
+When user says `council:` in Ask/Plan mode, remind them to switch to Agent mode first.
+
+## IMPORTANT: Shared Location for Worktrees
+
+Council files are stored in a **fixed shared location** so all models/worktrees can access them:
+
+```
+~/.cursor-council/           # Shared across all worktrees and sessions
+```
+
+**Always use this absolute path**: `~/.cursor-council/` (expand `~` to actual home directory)
+
+This ensures models running in different git worktrees can still see each other's responses.
+
+## Activation
+
+Council mode activates when:
+- User message starts with `council:` 
+- File `~/.cursor-council/active.json` exists and is not stale (< 1 hour old)
+
+## Identity
+
+Identify yourself consistently:
+- Claude models → use filename `claude.md`
+- GPT-4/GPT-4o → use filename `gpt4.md`  
+- Gemini → use filename `gemini.md`
+- Other → use filename `other-{modelname}.md`
+
+## File Structure
+
+```
+~/.cursor-council/
+  active.json           # { "topic": "...", "id": "...", "created": "ISO8601", "phase": "collecting|critiquing|synthesizing" }
+  responses/
+    {model}.md          # Each model's initial response
+  critiques/
+    {model}.md          # Each model's review of others
+  synthesis/
+    {model}.md          # Each model's synthesis (can have multiple!)
+```
+
+## Commands & Behavior
+
+### `council: {question}`
+Start or join a council topic.
+
+1. Check if `~/.cursor-council/active.json` exists
+   - If YES and same topic: join existing council
+   - If YES and different topic: warn user, ask to `council: clear` first
+   - If NO: create `~/.cursor-council/` directory and `active.json`
+
+2. Create `active.json`:
+```json
+{
+  "topic": "{user's question}",
+  "id": "{short-hash-or-timestamp}",
+  "created": "{ISO8601 timestamp}",
+  "phase": "collecting"
+}
+```
+
+3. Write your response to `~/.cursor-council/responses/{model}.md`:
+```markdown
+# {Model Name} Response
+
+**Topic**: {question}
+**Confidence**: {High|Medium|Low}
+**Timestamp**: {ISO8601}
+
+## Analysis
+
+{Your thorough response here}
+
+## Key Points
+
+1. {Main point 1}
+2. {Main point 2}
+3. {Main point 3}
+
+## Uncertainties
+
+- {Any areas you're less sure about}
+```
+
+4. Check `~/.cursor-council/responses/` for other responses
+   - If others exist: mention them, offer to continue to critique phase
+   - If alone: tell user "Submitted. Ask other models the same question, then come back and say `council: continue`"
+
+### `council: continue`
+Move to critique phase - review other models' responses.
+
+1. Update `~/.cursor-council/active.json` phase to `"critiquing"`
+
+2. Read all files in `~/.cursor-council/responses/`
+
+3. Write your critique to `~/.cursor-council/critiques/{model}.md`:
+```markdown
+# {Model Name} Critique
+
+**Timestamp**: {ISO8601}
+
+## Reviewed Responses
+- {list other models you read}
+
+## Points of Agreement
+- {Where you align with others}
+
+## Points of Disagreement  
+- {Where you differ, with reasoning}
+
+## Strongest Arguments (From Any Model)
+- {Best points regardless of source}
+
+## Gaps Identified
+- {What no one addressed adequately}
+
+## My Updated Position
+{Has your view changed after reading others? How?}
+```
+
+4. Report summary to user, suggest `council: synthesize` when ready
+
+### `council: synthesize`
+Produce final unified answer.
+
+1. Update `~/.cursor-council/active.json` phase to `"synthesizing"`
+
+2. Read ALL files:
+   - All responses in `~/.cursor-council/responses/`
+   - All critiques in `~/.cursor-council/critiques/`
+   - Do NOT read other syntheses - keep syntheses independent
+
+3. Write `~/.cursor-council/synthesis/{model}.md`:
+```markdown
+# Council Synthesis
+
+**Topic**: {question}
+**Synthesized by**: {model name}
+**Participants**: {list models}
+**Date**: {timestamp}
+
+## Consensus Points
+{What all/most models agreed on}
+
+## Contested Points
+| Point | Position A | Position B | Resolution |
+|-------|-----------|-----------|------------|
+| {issue} | {model}: {view} | {model}: {view} | {recommended resolution + reasoning} |
+
+## Integrated Recommendation
+
+{Final unified answer that incorporates the strongest arguments, acknowledges trade-offs, and provides clear guidance}
+
+## Confidence Assessment
+- Overall confidence: {High|Medium|Low}
+- Strongest support for: {which aspects}
+- Remaining uncertainty: {what's still unclear}
+
+## Minority Opinions
+{Any valid perspectives that didn't make it into main recommendation but are worth noting}
+```
+
+4. Present synthesis to user
+
+### `council: status`
+Check current council state.
+
+1. Read `~/.cursor-council/active.json`
+2. List files in `~/.cursor-council/responses/`, `~/.cursor-council/critiques/`, and `~/.cursor-council/synthesis/`
+3. Report: topic, phase, who has responded, who has critiqued, who has synthesized
+
+### `council: clear`
+End current council session.
+
+1. Delete `~/.cursor-council/` directory entirely
+2. Confirm cleared to user
+
+## Behavior Rules
+
+1. **Always check for council state** at conversation start if `~/.cursor-council/` exists
+2. **Never overwrite** another model's files - only write to your own `{model}.md`
+3. **Be explicit** about what you read and what you wrote
+4. **Maintain intellectual honesty** - if another model makes a better argument, acknowledge it
+5. **Stay focused** on the topic - don't expand scope during council
+6. **Timestamp your files** - include ISO8601 timestamp in file header
+
+## Example Session
+
+```
+User (to Claude):    council: Should we use Redis or Memcached for session caching?
+Claude:              *creates ~/.cursor-council/active.json*
+                     *writes ~/.cursor-council/responses/claude.md*
+                     "Submitted my analysis favoring Redis for this use case.
+                      Ask GPT-4 or Gemini the same question, then 'council: continue'"
+
+User (to GPT-4):     council: Should we use Redis or Memcached for session caching?
+GPT-4:               *reads active.json, joins council*
+                     *writes ~/.cursor-council/responses/gpt4.md*
+                     "Submitted. I see Claude also responded. 
+                      Ready for critique phase when you say 'council: continue'"
+
+User (to Claude):    council: continue
+Claude:              *reads gpt4.md*
+                     *writes ~/.cursor-council/critiques/claude.md*
+                     "Reviewed GPT-4's response. We both favor Redis but differ on 
+                      cluster configuration. Ready for synthesis."
+
+User (to GPT-4):     council: continue
+GPT-4:               *reads claude.md*
+                     *writes ~/.cursor-council/critiques/gpt4.md*
+                     "Claude's point about persistence is strong. I've updated my view.
+                      Say 'council: synthesize' for final recommendation."
+
+User (to Claude):    council: synthesize  
+Claude:              *reads everything*
+                     *writes ~/.cursor-council/synthesis/claude.md*
+                     "Council Synthesis: Unanimous recommendation for Redis..."
+
+User (to GPT-4):     council: synthesize  
+GPT-4:               *reads responses + critiques (not claude's synthesis)*
+                     *writes ~/.cursor-council/synthesis/gpt4.md*
+                     "Council Synthesis: I also recommend Redis, with these nuances..."
+```
